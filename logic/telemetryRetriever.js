@@ -10,7 +10,7 @@ const maxWorkers = 50;
 let runningWorkers = 0;
 
 const getQuery = () => {
-  const date = moment().add(-6, 'd');
+  const date = moment().add(parseInt(process.env.PROCESS_MINUTES_LESS, 10), 'm');
   let query = "SELECT STATS FROM GAME WHERE DATEPART(YEAR, LOGDATE) = ";
   query += date.year();
   query += " AND DATEPART(MONTH, LOGDATE) = ";
