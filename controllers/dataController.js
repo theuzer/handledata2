@@ -3,6 +3,8 @@ const sql = require('mssql');
 const dataConnection = require('../database/azureDb').dataConnection;
 const errorController = require('./errorController');
 
+const notInsertedGamesQueue = [];
+
 const azureDateBuilder = (year, month, day, hour, minute, second) => `${year}-${month}-${day} ${hour}:${minute}:${second}`;
 const dateBuilder = date => azureDateBuilder(date.getFullYear(), date.getMonth() + 1, date.getDate(), date.getHours(), date.getMinutes(), date.getSeconds());
 const boolBuilder = bool => bool ? 1 : 0;
@@ -55,33 +57,36 @@ const doQuery = (query, query2) => {
     });
 };
 
+const doQueryNotInsertedGames = (query, query2) => {
+  new sql.Request(dataConnection).query(query)
+    .then(() => {
+      notInsertedGamesQueue.shift();
+      doQueryNotInsertedGames(notInsertedGamesQueue[0].query, notInsertedGamesQueue[0].query2);
+    })
+    .catch((err) => {
+      if (err.code === 'EREQUEST') {
+        insertError(query2);
+        notInsertedGamesQueue.shift();
+        doQueryNotInsertedGames(notInsertedGamesQueue[0].query, notInsertedGamesQueue[0].query2);
+      }
+    });
+};
+
+setTimeout(() => {
+  if (notInsertedGamesQueue.length > 0) {
+    doQueryNotInsertedGames(notInsertedGamesQueue[0].query, notInsertedGamesQueue[0].query2);
+  }
+}, 3600000);
+
 exports.insertTelemetries = (matches, query2) => {
   const query = getInsertTelemetriesQuery(matches);
 
   doQuery(query, query2);
 
-  let numberOfRetries = 100;
-  let attemptToSave;
-  let errorMessage;
-  let isRunning = false;
-
   dataConnection.on('error', (err) => {
-    if (!isRunning) {
-      isRunning = true;
-      if (err.code === 'ETIMEOUT') {
-        if (numberOfRetries > 0) {
-          attemptToSave = (100 - numberOfRetries) + 1;
-          errorMessage = `timeout saving games. attempt ${attemptToSave}`;
-          errorController.createErrorMongo(errorMessage, attemptToSave);
-          setTimeout(() => {
-            numberOfRetries -= 1;
-            isRunning = false;
-            doQuery(query, query2);
-          }, 45000);
-        } else {
-          // notLoggedGameController.createNotLoggedGames(games);
-        }
-      }
+    if (err.code === 'ETIMEOUT') {
+      notInsertedGamesQueue.push({ query, query2 });
+      errorController.createErrorMongo('new timeout inserting games', 0, notInsertedGamesQueue.length);
     }
   });
 };
